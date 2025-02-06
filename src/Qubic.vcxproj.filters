@@ -118,7 +118,7 @@
     <ClInclude Include="contracts\QVAULT.h">
       <Filter>contracts</Filter>
     </ClInclude>
-    <ClInclude Include="contracts\qubex.h">
+    <ClInclude Include="contracts\Qubex.h">
       <Filter>contracts</Filter>
     </ClInclude>
     <ClInclude Include="contract_core\contract_def.h">

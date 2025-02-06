@@ -169,7 +169,7 @@ struct __FunctionOrProcedureBeginEndGuard
 #define CONTRACT_INDEX QUBEX_CONTRACT_INDEX
 #define CONTRACT_STATE_TYPE QUBEX
 #define CONTRACT_STATE2_TYPE QUBEX2
-#include "contracts/qubex.h"
+#include "contracts/Qubex.h"
 
 
 // new contracts should be added above this line
