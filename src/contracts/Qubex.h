@@ -3,12 +3,16 @@ using namespace QPI;
 constexpr uint64 QUBEX_MAX_SUPPLY_OF_TOKEN = 18446744073709551615ULL;                // 2^64 - 1
 constexpr uint32 QUBEX_LENGTH_OF_TOKEN_ADDRESS = 42u;
 constexpr uint32 QUBEX_MAX_NUMBER_OF_ETHEREUM_TOKEN = 65536u;
+constexpr uint32 QUBEX_INITIAL_LP_AMOUNT = 1000u;
 
 constexpr uint32 QUBEX_SUCCESS = 0;
 constexpr uint32 QUBEX_OVERFLOW_MAX_NUMBER_OF_TOKEN = 1;
 constexpr uint32 QUBEX_ISSUED_TOKEN = 2;
 constexpr uint32 QUBEX_INSUFFICIENT_TOKEN = 3;
 constexpr uint32 QUBEX_NOT_ISSUED_TOKEN = 4;
+constexpr uint32 QUBEX_CREATED_POOL = 5;
+constexpr uint32 QUBEX_INSUFFICIENT_FUND = 6;
+constexpr uint32 QUBEX_NOT_TRANSFERRED = 6;
 
 struct QUBEX2
 {
@@ -70,7 +74,9 @@ public:
 
     struct createLiquidityPool_input
     {
+        uint64 LPTokenName;
         uint64 amountOfQubic;
+        uint64 tokenName;
         uint64 amountOfERC20Token;
         uint32 fee;
         Array<uint8, 64> addressOfTokenInEthereum;
@@ -106,9 +112,21 @@ public:
         uint32 returnCode;
     };
 
+    struct withdrawLiquidity_input
+    {
+        uint64 amountOfLP;
+        uint32 idOfLP;
+    };
+
+    struct withdrawLiquidity_output
+    {
+        uint32 returnCode;
+    };
+
 protected:
 
     uint32 numberOfIssuedToken;
+    uint32 numberOfPool;
 
     struct ERC20TokenInfo
     {
@@ -121,6 +139,8 @@ protected:
 
     struct liquidityInfo
     {
+        uint64 LPTokenName;
+        uint64 supplyOfLPToken;
         uint64 amountOfQubic;
         uint64 amountOfERC20Token;
         uint32 fee;
@@ -184,6 +204,15 @@ protected:
             for(locals._r = 0; locals._r < state.numberOfIssuedToken; locals._r++)
             {
                 if(state.wrappedTokens.get(locals._r).tokenName == input.tokenName)
+                {
+                    output.returnCode = QUBEX_ISSUED_TOKEN;
+                    return ;
+                }
+            }
+
+            for(locals._r = 0 ; locals._r < state.numberOfPool; locals._r++)
+            {
+                if(state.liquidityPools.get(locals._r).LPTokenName == input.tokenName)
                 {
                     output.returnCode = QUBEX_ISSUED_TOKEN;
                     return ;
@@ -253,6 +282,12 @@ protected:
             return ;
         }
 
+        if(qpi.transferShareOwnershipAndPossession(input.tokenName, SELF, qpi.invocator(), qpi.invocator(), input.sendAmount, SELF) != input.sendAmount)
+        {
+            output.returnCode = QUBEX_NOT_TRANSFERRED;
+            return ;
+        }
+
         locals.issuedAsset.tokenName = state.wrappedTokens.get(locals._t).tokenName;
         locals.issuedAsset.numberOfShares -= input.sendAmount;
         for(locals._r = 0; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r++)
@@ -264,9 +299,92 @@ protected:
 
     _
 
+    struct createLiquidityPool_locals
+    {
+        liquidityInfo newLP;
+        uint32 _t, _r;
+    };
+
     PUBLIC_PROCEDURE(createLiquidityPool)
 
+        if(qpi.invocationReward() > 0)
+        {
+            qpi.transfer(qpi.invocator(), qpi.invocationReward());
+        }
 
+        for(locals._r = 0; locals._r < state.numberOfIssuedToken; locals._r++)
+        {
+            if(state.wrappedTokens.get(locals._r).tokenName == input.LPTokenName)
+            {
+                output.returnCode = QUBEX_ISSUED_TOKEN;
+                return ;
+            }
+        }
+
+        for(locals._r = 0 ; locals._r < state.numberOfPool; locals._r++)
+        {
+            if(state.liquidityPools.get(locals._r).LPTokenName == input.LPTokenName)
+            {
+                output.returnCode = QUBEX_ISSUED_TOKEN;
+                return ;
+            }
+        }
+
+        for(locals._t = 0 ; locals._t < state.numberOfPool; locals._t++)
+        {
+            for(locals._r = 0 ; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r++)
+            {
+                if(state.liquidityPools.get(locals._t).addressOfTokenInEthereum.get(locals._r) != input.addressOfTokenInEthereum.get(locals._r))
+                {
+                    break;
+                }
+            }
+            if(locals._r == QUBEX_LENGTH_OF_TOKEN_ADDRESS)
+            {
+                break;
+            }
+        }
+
+        if(locals._t != state.numberOfPool)
+        {
+            output.returnCode = QUBEX_CREATED_POOL;
+            return ;
+        }
+
+        if(qpi.invocationReward() < input.amountOfQubic)
+        {
+            output.returnCode = QUBEX_INSUFFICIENT_FUND;
+            return ;
+        }
+        if(qpi.numberOfPossessedShares(input.tokenName, SELF, qpi.invocator(), qpi.invocator(), SELF_INDEX, SELF_INDEX) < input.amountOfERC20Token)
+        {
+            output.returnCode = QUBEX_INSUFFICIENT_TOKEN;
+            return ;
+        }
+
+        if(qpi.transferShareOwnershipAndPossession(input.tokenName, SELF, qpi.invocator(), qpi.invocator(), input.amountOfERC20Token, SELF) != input.amountOfERC20Token)
+        {
+            output.returnCode = QUBEX_NOT_TRANSFERRED;
+            return ;
+        }
+        if(qpi.invocationReward() > input.amountOfQubic)
+        {
+            qpi.transfer(qpi.invocator(), qpi.invocationReward() - input.amountOfQubic);
+        }
+
+        qpi.issueAsset(input.LPTokenName, SELF, 0, QUBEX_MAX_SUPPLY_OF_TOKEN, 0);
+        qpi.transferShareOwnershipAndPossession(input.LPTokenName, SELF, SELF, SELF, QUBEX_INITIAL_LP_AMOUNT, qpi.invocator());
+
+        locals.newLP.supplyOfLPToken = QUBEX_INITIAL_LP_AMOUNT;
+        locals.newLP.fee = input.fee;
+        locals.newLP.LPTokenName = input.LPTokenName;
+        locals.newLP.amountOfQubic = input.amountOfQubic;
+        locals.newLP.amountOfERC20Token = input.amountOfERC20Token;
+        for(locals._r = 0 ; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r)
+        {
+            locals.newLP.addressOfTokenInEthereum.set(locals._r, input.addressOfTokenInEthereum.get(locals._r));
+        }
+        state.liquidityPools.set(state.numberOfPool++, locals.newLP);
     _
 
     PUBLIC_PROCEDURE(addLiquidityPool)
@@ -279,6 +397,12 @@ protected:
 
     _
 
+    PUBLIC_PROCEDURE(withdrawLiquidity)
+
+
+    _
+
+
     REGISTER_USER_FUNCTIONS_AND_PROCEDURES
 
         REGISTER_USER_FUNCTION(fetchTokenInfo, 1);
@@ -289,6 +413,7 @@ protected:
         REGISTER_USER_PROCEDURE(createLiquidityPool, 3);
         REGISTER_USER_PROCEDURE(addLiquidityPool, 4);
         REGISTER_USER_PROCEDURE(swap, 5);
+        REGISTER_USER_PROCEDURE(withdrawLiquidity, 6);
     _
 
     INITIALIZE
