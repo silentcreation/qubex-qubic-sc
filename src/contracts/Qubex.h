@@ -4,9 +4,10 @@ constexpr uint64 QUBEX_MAX_SUPPLY_OF_TOKEN = 18446744073709551615ULL;           
 constexpr uint32 QUBEX_LENGTH_OF_TOKEN_ADDRESS = 42u;
 constexpr uint32 QUBEX_MAX_NUMBER_OF_ETHEREUM_TOKEN = 65536u;
 constexpr uint32 QUBEX_INITIAL_LP_AMOUNT = 1000u;
+constexpr uint32 QUBEX_SHAREHOLDERS_FEE = 5;            // permile
+constexpr uint32 QUBEX_PLATFORM_FEE = 20;            // permile
 
 constexpr uint32 QUBEX_SUCCESS = 0;
-constexpr uint32 QUBEX_INPUT_ERROR = 11;
 constexpr uint32 QUBEX_OVERFLOW_MAX_NUMBER_OF_TOKEN = 1;
 constexpr uint32 QUBEX_ISSUED_TOKEN = 2;
 constexpr uint32 QUBEX_INSUFFICIENT_TOKEN = 3;
@@ -17,6 +18,7 @@ constexpr uint32 QUBEX_NOT_TRANSFERRED = 7;
 constexpr uint32 QUBEX_NOT_CREATED_POOL = 8;
 constexpr uint32 QUBEX_WRONG_LP_TOKEN_NAME = 9;
 constexpr uint32 QUBEX_WRONG_TOKEN_NAME = 10;
+constexpr uint32 QUBEX_INPUT_ERROR = 11;
 
 struct QUBEX2
 {
@@ -68,7 +70,6 @@ public:
     {
         uint64 ERC20TokenName;
         uint64 sendAmount;
-        Array<uint8, 64> addressOfTokenInEthereum;
     };
 
     struct sendTokenToEthereum_output
@@ -83,7 +84,6 @@ public:
         uint64 ERC20TokenName;
         uint64 amountOfERC20Token;
         uint32 fee;
-        Array<uint8, 64> addressOfTokenInEthereum;
     };
 
     struct createLiquidityPool_output
@@ -97,9 +97,8 @@ public:
         uint64 LPTokenName;
         uint64 amountOfQubic;
         uint64 amountOfERC20Token;
-        uint32 tokenId;
+        uint32 ERC20TokenId;
         uint32 LPTokenId;
-        Array<uint8, 64> addressOfTokenInEthereum;
     };
 
     struct addLiquidityPool_output
@@ -110,7 +109,7 @@ public:
     struct withdrawLiquidity_input
     {
         uint64 amountOfLP;
-        uint32 idOfLP;
+        uint32 LPTokenId;
     };
 
     struct withdrawLiquidity_output
@@ -122,8 +121,9 @@ public:
     {
         uint64 amountOfQubic;
         uint64 amountOfERC20Token;
-        Array<uint8, 64> addressOfTokenInEthereum;
-        bit typeOfSwap;
+        bit typeOfSwap;               // 0 means that user want to swap Qubic to ERC20Token, 1 means that user want to swap ERC20Token to Qubic
+        uint32 ERC20TokenId;
+        uint32 LPTokenId;
     };
 
     struct swap_output
@@ -133,6 +133,8 @@ public:
 
 protected:
 
+    uint64 earnedQubic;
+    uint64 shareHoldersFee;
     uint32 numberOfIssuedToken;
     uint32 numberOfPool;
 
@@ -152,8 +154,8 @@ protected:
         uint64 supplyOfLPToken;
         uint64 amountOfQubic;
         uint64 amountOfERC20Token;
+        uint64 collectedFee;
         uint32 fee;
-        Array<uint8, 64> addressOfTokenInEthereum;
     };
 
     Array<liquidityInfo, QUBEX_MAX_NUMBER_OF_ETHEREUM_TOKEN> liquidityPools;
@@ -271,14 +273,7 @@ protected:
 
         for(locals._t = 0 ; locals._t < state.numberOfIssuedToken; locals._t++)
         {
-            for(locals._r = 0 ; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r++)
-            {
-                if(state.wrappedTokens.get(locals._t).addressOfTokenInEthereum.get(locals._r) != input.addressOfTokenInEthereum.get(locals._r))
-                {
-                    break;
-                }
-            }
-            if(locals._r == QUBEX_LENGTH_OF_TOKEN_ADDRESS)
+            if(state.wrappedTokens.get(locals._t).ERC20TokenName == input.ERC20TokenName)
             {
                 break;
             }
@@ -306,7 +301,7 @@ protected:
         locals.issuedAsset.numberOfShares -= input.sendAmount;
         for(locals._r = 0; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r++)
         {
-            locals.issuedAsset.addressOfTokenInEthereum.set(locals._r, input.addressOfTokenInEthereum.get(locals._r));
+            locals.issuedAsset.addressOfTokenInEthereum.set(locals._r, state.wrappedTokens.get(locals._t).addressOfTokenInEthereum.get(locals._r));
         }
 
         state.wrappedTokens.set(locals._t, locals.issuedAsset);
@@ -326,6 +321,12 @@ protected:
             qpi.transfer(qpi.invocator(), qpi.invocationReward());
         }
 
+        if(input.fee > 1000)
+        {
+            output.returnCode = QUBEX_INPUT_ERROR;
+            return ;
+        }
+
         for(locals._r = 0; locals._r < state.numberOfIssuedToken; locals._r++)
         {
             if(state.wrappedTokens.get(locals._r).ERC20TokenName == input.LPTokenName)
@@ -342,27 +343,6 @@ protected:
                 output.returnCode = QUBEX_ISSUED_TOKEN;
                 return ;
             }
-        }
-
-        for(locals._t = 0 ; locals._t < state.numberOfPool; locals._t++)
-        {
-            for(locals._r = 0 ; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r++)
-            {
-                if(state.liquidityPools.get(locals._t).addressOfTokenInEthereum.get(locals._r) != input.addressOfTokenInEthereum.get(locals._r))
-                {
-                    break;
-                }
-            }
-            if(locals._r == QUBEX_LENGTH_OF_TOKEN_ADDRESS)
-            {
-                break;
-            }
-        }
-
-        if(locals._t != state.numberOfPool)
-        {
-            output.returnCode = QUBEX_CREATED_POOL;
-            return ;
         }
 
         if(qpi.invocationReward() < input.amountOfQubic)
@@ -395,10 +375,7 @@ protected:
         locals.newLP.amountOfQubic = input.amountOfQubic;
         locals.newLP.amountOfERC20Token = input.amountOfERC20Token;
         locals.newLP.ERC20TokenName = input.ERC20TokenName;
-        for(locals._r = 0 ; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r)
-        {
-            locals.newLP.addressOfTokenInEthereum.set(locals._r, input.addressOfTokenInEthereum.get(locals._r));
-        }
+        locals.newLP.collectedFee = 0;
         state.liquidityPools.set(state.numberOfPool++, locals.newLP);
     _
 
@@ -411,35 +388,13 @@ protected:
 
     PUBLIC_PROCEDURE(addLiquidityPool)
 
-        for(locals._r = 0 ; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r++)
+        if(input.LPTokenId >= state.numberOfPool || input.ERC20TokenId >= state.numberOfIssuedToken)
         {
-            if(state.wrappedTokens.get(input.tokenId).addressOfTokenInEthereum.get(locals._r) != input.addressOfTokenInEthereum.get(locals._r))
-            {
-                break;
-            }
-        }
-
-        if(locals._r != QUBEX_LENGTH_OF_TOKEN_ADDRESS)
-        {
-            output.returnCode = QUBEX_INPUT_ERROR;
+            output.returnCode = QUBEX_OVERFLOW_MAX_NUMBER_OF_TOKEN;
             return ;
         }
 
-        for(locals._r = 0 ; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r++)
-        {
-            if(state.liquidityPools.get(input.LPTokenId).addressOfTokenInEthereum.get(locals._r) != input.addressOfTokenInEthereum.get(locals._r))
-            {
-                break;
-            }
-        }
-
-        if(locals._r != QUBEX_LENGTH_OF_TOKEN_ADDRESS)
-        {
-            output.returnCode = QUBEX_INPUT_ERROR;
-            return ;
-        }
-
-        if(state.wrappedTokens.get(input.tokenId).ERC20TokenName != input.ERC20TokenName)
+        if(state.wrappedTokens.get(input.ERC20TokenId).ERC20TokenName != input.ERC20TokenName)
         {
             output.returnCode = QUBEX_WRONG_TOKEN_NAME;
             return ;
@@ -480,11 +435,7 @@ protected:
         locals.updatedPool.fee = state.liquidityPools.get(input.LPTokenId).fee;
         locals.updatedPool.supplyOfLPToken = state.liquidityPools.get(input.LPTokenId).supplyOfLPToken + locals.amountOfNewLPToken;
         locals.updatedPool.ERC20TokenName = state.liquidityPools.get(input.LPTokenId).ERC20TokenName;
-        
-        for(locals._r = 0 ; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r++)
-        {
-            locals.updatedPool.addressOfTokenInEthereum.set(locals._r, state.liquidityPools.get(input.LPTokenId).addressOfTokenInEthereum.get(locals._r));
-        }
+        locals.updatedPool.collectedFee = state.liquidityPools.get(input.LPTokenId).collectedFee;
 
         state.liquidityPools.set(input.LPTokenId, locals.updatedPool);
 
@@ -503,8 +454,8 @@ protected:
 
     PUBLIC_PROCEDURE_WITH_LOCALS(withdrawLiquidity)
 
-        locals.ERC20TokenName = state.liquidityPools.get(input.idOfLP).ERC20TokenName;
-        locals.LPTokenName = state.liquidityPools.get(input.idOfLP).LPTokenName;
+        locals.ERC20TokenName = state.liquidityPools.get(input.LPTokenId).ERC20TokenName;
+        locals.LPTokenName = state.liquidityPools.get(input.LPTokenId).LPTokenName;
 
         if(qpi.numberOfPossessedShares(locals.LPTokenName, SELF, qpi.invocator(), qpi.invocator(), SELF_INDEX, SELF_INDEX) < input.amountOfLP)
         {
@@ -518,32 +469,111 @@ protected:
             return ;
         }
 
-        locals.amountOfERC20TokenTransferred = div(state.liquidityPools.get(input.idOfLP).amountOfERC20Token * input.amountOfLP, state.liquidityPools.get(input.idOfLP).supplyOfLPToken);
-        locals.amountOfQubicTransferred = div(state.liquidityPools.get(input.idOfLP).amountOfQubic * input.amountOfLP, state.liquidityPools.get(input.idOfLP).supplyOfLPToken);
+        locals.amountOfERC20TokenTransferred = div(state.liquidityPools.get(input.LPTokenId).amountOfERC20Token * input.amountOfLP, state.liquidityPools.get(input.LPTokenId).supplyOfLPToken);
+        locals.amountOfQubicTransferred = div(state.liquidityPools.get(input.LPTokenId).amountOfQubic * input.amountOfLP, state.liquidityPools.get(input.LPTokenId).supplyOfLPToken);
 
         qpi.transfer(qpi.invocator(), locals.amountOfQubicTransferred);
         qpi.transferShareOwnershipAndPossession(locals.ERC20TokenName, SELF, SELF, SELF, locals.amountOfERC20TokenTransferred, qpi.invocator());
 
-        locals.updatedPool.amountOfERC20Token = state.liquidityPools.get(input.idOfLP).amountOfERC20Token - locals.amountOfERC20TokenTransferred;
-        locals.updatedPool.amountOfQubic = state.liquidityPools.get(input.idOfLP).amountOfQubic - locals.amountOfQubicTransferred;
-        locals.updatedPool.fee = state.liquidityPools.get(input.idOfLP).fee;
-        locals.updatedPool.LPTokenName = state.liquidityPools.get(input.idOfLP).LPTokenName;
-        locals.updatedPool.ERC20TokenName = state.liquidityPools.get(input.idOfLP).ERC20TokenName;
-        locals.updatedPool.supplyOfLPToken = state.liquidityPools.get(input.idOfLP).supplyOfLPToken - input.amountOfLP;
-        
-        for(locals._r = 0 ; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r++)
-        {
-            locals.updatedPool.addressOfTokenInEthereum.set(locals._r, state.liquidityPools.get(input.idOfLP).addressOfTokenInEthereum.get(locals._r));
-        }
+        locals.updatedPool.amountOfERC20Token = state.liquidityPools.get(input.LPTokenId).amountOfERC20Token - locals.amountOfERC20TokenTransferred;
+        locals.updatedPool.amountOfQubic = state.liquidityPools.get(input.LPTokenId).amountOfQubic - locals.amountOfQubicTransferred;
+        locals.updatedPool.fee = state.liquidityPools.get(input.LPTokenId).fee;
+        locals.updatedPool.LPTokenName = state.liquidityPools.get(input.LPTokenId).LPTokenName;
+        locals.updatedPool.ERC20TokenName = state.liquidityPools.get(input.LPTokenId).ERC20TokenName;
+        locals.updatedPool.supplyOfLPToken = state.liquidityPools.get(input.LPTokenId).supplyOfLPToken - input.amountOfLP;
+        locals.updatedPool.collectedFee = state.liquidityPools.get(input.LPTokenId).collectedFee;
 
-        state.liquidityPools.set(input.idOfLP, locals.updatedPool);
+        state.liquidityPools.set(input.LPTokenId, locals.updatedPool);
 
         output.returnCode = QUBEX_SUCCESS;
     _
 
+    struct swap_locals
+    {
+        liquidityInfo updatedPool;
+        uint64 ERC20TokenName;
+        uint64 LPTokenName;
+        uint64 realSwappedAmount;
+        uint64 amountOfSwappedToken;
+        uint64 transferredQubicAmount;
+    };
+
     PUBLIC_PROCEDURE(swap)
 
+        if(input.LPTokenId >= state.numberOfPool || input.ERC20TokenId >= state.numberOfIssuedToken)
+        {
+            output.returnCode = QUBEX_OVERFLOW_MAX_NUMBER_OF_TOKEN;
+            return ;
+        }
 
+        if(state.liquidityPools.get(input.LPTokenId).ERC20TokenName != state.wrappedTokens.get(input.ERC20TokenId).ERC20TokenName)
+        {
+            output.returnCode = QUBEX_INPUT_ERROR;
+            return ;
+        }
+
+        locals.ERC20TokenName = state.liquidityPools.get(input.LPTokenId).ERC20TokenName;
+        locals.LPTokenName = state.liquidityPools.get(input.LPTokenId).LPTokenName;
+
+        if(input.typeOfSwap == 0)
+        {
+            if(qpi.invocationReward() < input.amountOfQubic)
+            {
+                output.returnCode = QUBEX_INSUFFICIENT_FUND;
+                return ;
+            }
+
+            if(qpi.invocationReward() > input.amountOfQubic)
+            {
+                qpi.transfer(qpi.invocator(), input.amountOfQubic - qpi.invocationReward());
+            }
+
+            state.earnedQubic += div(input.amountOfQubic * QUBEX_PLATFORM_FEE, 1000ULL);
+            state.shareHoldersFee += div(input.amountOfQubic * QUBEX_SHAREHOLDERS_FEE, 1000ULL);
+            locals.updatedPool.collectedFee = state.liquidityPools.get(input.LPTokenId).collectedFee + div(input.amountOfQubic * state.liquidityPools.get(input.LPTokenId).fee, 1000ULL);
+            locals.realSwappedAmount = input.amountOfQubic - div(input.amountOfQubic * QUBEX_PLATFORM_FEE, 1000ULL) - div(input.amountOfQubic * QUBEX_SHAREHOLDERS_FEE, 1000ULL) - div(input.amountOfQubic * state.liquidityPools.get(input.LPTokenId).fee, 1000ULL);
+
+            locals.amountOfSwappedToken = state.liquidityPools.get(input.LPTokenId).amountOfERC20Token - (state.liquidityPools.get(input.LPTokenId).amountOfERC20Token * state.liquidityPools.get(input.LPTokenId).amountOfQubic / (state.liquidityPools.get(input.LPTokenId).amountOfQubic + input.amountOfQubic));
+            locals.updatedPool.amountOfQubic = state.liquidityPools.get(input.LPTokenId).amountOfQubic + input.amountOfQubic;
+            locals.updatedPool.amountOfERC20Token = state.liquidityPools.get(input.LPTokenId).amountOfERC20Token - locals.amountOfSwappedToken;
+            qpi.transferShareOwnershipAndPossession(state.liquidityPools.get(input.LPTokenId).ERC20TokenName, SELF, SELF, SELF, locals.amountOfSwappedToken, qpi.invocator());
+            locals.updatedPool.ERC20TokenName = state.liquidityPools.get(input.LPTokenId).ERC20TokenName;
+            locals.updatedPool.fee = state.liquidityPools.get(input.LPTokenId).fee;
+            locals.updatedPool.LPTokenName = state.liquidityPools.get(input.LPTokenId).LPTokenName;
+            locals.updatedPool.supplyOfLPToken = state.liquidityPools.get(input.LPTokenId).supplyOfLPToken;
+
+            state.liquidityPools.set(input.LPTokenId, locals.updatedPool);
+        }
+        else 
+        {
+            if(qpi.numberOfPossessedShares(state.liquidityPools.get(input.LPTokenId).ERC20TokenName, SELF, qpi.invocator(), qpi.invocator(), SELF_INDEX, SELF_INDEX) < input.amountOfERC20Token)
+            {
+                output.returnCode = QUBEX_INSUFFICIENT_TOKEN;
+                return ;
+            }
+
+            qpi.transferShareOwnershipAndPossession(state.liquidityPools.get(input.LPTokenId).ERC20TokenName, SELF, qpi.invocator(), qpi.invocator(), input.amountOfERC20Token, SELF);
+
+            locals.amountOfSwappedToken = state.liquidityPools.get(input.LPTokenId).amountOfQubic - (state.liquidityPools.get(input.LPTokenId).amountOfQubic * state.liquidityPools.get(input.LPTokenId).amountOfERC20Token / (state.liquidityPools.get(input.LPTokenId).amountOfERC20Token + input.amountOfERC20Token));
+
+            state.earnedQubic += div(locals.amountOfSwappedToken * QUBEX_PLATFORM_FEE, 1000ULL);
+            state.shareHoldersFee += div(locals.amountOfSwappedToken * QUBEX_SHAREHOLDERS_FEE, 1000ULL);
+            locals.updatedPool.collectedFee = state.liquidityPools.get(input.LPTokenId).collectedFee + div(locals.amountOfSwappedToken * state.liquidityPools.get(input.LPTokenId).fee, 1000ULL);
+            locals.transferredQubicAmount = locals.amountOfSwappedToken - div(locals.amountOfSwappedToken * QUBEX_PLATFORM_FEE, 1000ULL) - div(locals.amountOfSwappedToken * QUBEX_SHAREHOLDERS_FEE, 1000ULL) - div(locals.amountOfSwappedToken * state.liquidityPools.get(input.LPTokenId).fee, 1000ULL);
+
+            qpi.transfer(qpi.invocator(), locals.transferredQubicAmount);
+
+            locals.updatedPool.amountOfERC20Token = state.liquidityPools.get(input.LPTokenId).amountOfERC20Token + input.amountOfERC20Token;
+            locals.updatedPool.amountOfQubic = state.liquidityPools.get(input.LPTokenId).amountOfQubic - locals.amountOfSwappedToken;
+            locals.updatedPool.ERC20TokenName = state.liquidityPools.get(input.LPTokenId).ERC20TokenName;
+            locals.updatedPool.fee = state.liquidityPools.get(input.LPTokenId).fee;
+            locals.updatedPool.LPTokenName = state.liquidityPools.get(input.LPTokenId).LPTokenName;
+            locals.updatedPool.supplyOfLPToken = state.liquidityPools.get(input.LPTokenId).supplyOfLPToken;
+
+            state.liquidityPools.set(input.LPTokenId, locals.updatedPool);
+        }
+
+        output.returnCode = QUBEX_SUCCESS;
     _
 
 
