@@ -28,30 +28,43 @@ struct QUBEX : public ContractBase
 {
 public:
 
-    struct fetchTokenInfo_input
+    struct fetchTokenInfoById_input
     {
         Array<uint8, 64> addressOfTokenInEthereum;
     };
 
-    struct fetchTokenInfo_output
+    struct fetchTokenInfoById_output
     {
-        id issuer;
         uint64 ERC20TokenName;
         sint64 numberOfShares;
-        uint64 unitOfMeasurement;
-        sint8 numberOfDecimalPlaces;
     };
 
-    struct fetchLPInfo_input
+    struct fetchLPInfoById_input
     {
-        Array<uint8, 64> addressOfTokenInEthereum;
+        uint64 ERC20TokenName;
     };
 
-    struct fetchLPInfo_output
+    struct fetchLPInfoById_output
     {
+        uint64 LPTokenName;
+        uint64 supplyOfLPToken;
         uint64 amountOfQubic;
         uint64 amountOfERC20Token;
+        uint64 collectedFee;
         uint32 fee;
+    };
+
+    struct getStateOfQubex_input
+    {
+
+    };
+
+    struct getStateOfQubex_output
+    {
+        uint64 earnedQubic;
+        uint64 shareHoldersFee;
+        uint32 numberOfIssuedToken;
+        uint32 numberOfPool;
     };
 
     struct receiveTokenFromEthereum_input
@@ -165,15 +178,63 @@ protected:
         return (a < b) ? a : b;
     }
 
-    PUBLIC_FUNCTION(fetchTokenInfo)
+    struct fetchTokenInfoById_locals
+    {
+        uint32 _t, _r;
+    };
 
+    PUBLIC_FUNCTION_WITH_LOCALS(fetchTokenInfoById)
+
+        for(locals._t = 0 ; locals._t < state.numberOfIssuedToken; locals._t++)
+        {
+            for(locals._r = 0; locals._r < QUBEX_LENGTH_OF_TOKEN_ADDRESS; locals._r++)
+            {
+                if(state.wrappedTokens.get(locals._t).addressOfTokenInEthereum.get(locals._r) != input.addressOfTokenInEthereum.get(locals._r))
+                {
+                    break;
+                }
+            }
+            if(locals._r == QUBEX_LENGTH_OF_TOKEN_ADDRESS)
+            {
+                output.ERC20TokenName = state.wrappedTokens.get(locals._t).ERC20TokenName;
+                output.numberOfShares = state.wrappedTokens.get(locals._t).numberOfShares;
+                return ;
+            }
+        }
+    _
+
+    struct fetchLPInfoById_locals
+    {
+        uint32 _t;
+    };
+
+    PUBLIC_FUNCTION_WITH_LOCALS(fetchLPInfoById)
+
+        for(locals._t = 0 ; locals._t < state.numberOfPool; locals._t++)
+        {
+            if(state.liquidityPools.get(locals._t).amountOfERC20Token == input.ERC20TokenName)
+            {
+                output.amountOfERC20Token = state.liquidityPools.get(locals._t).amountOfERC20Token;
+                output.amountOfQubic = state.liquidityPools.get(locals._t).amountOfQubic;
+                output.collectedFee = state.liquidityPools.get(locals._t).collectedFee;
+                output.fee = state.liquidityPools.get(locals._t).fee;
+                output.LPTokenName = state.liquidityPools.get(locals._t).LPTokenName;
+                output.supplyOfLPToken = state.liquidityPools.get(locals._t).supplyOfLPToken;
+
+                return ;
+            }
+        }
+    _
+
+    PUBLIC_FUNCTION(getStateOfQubex)
+
+        output.earnedQubic = state.earnedQubic;
+        output.numberOfIssuedToken = state.numberOfIssuedToken;
+        output.numberOfPool = state.numberOfPool;
+        output.shareHoldersFee = state.shareHoldersFee;
 
     _
 
-    PUBLIC_FUNCTION(fetchLPInfo)
-
-    
-    _
 
     struct receiveTokenFromEthereum_locals
     {
@@ -579,8 +640,9 @@ protected:
 
     REGISTER_USER_FUNCTIONS_AND_PROCEDURES
 
-        REGISTER_USER_FUNCTION(fetchTokenInfo, 1);
-        REGISTER_USER_FUNCTION(fetchLPInfo, 2);
+        REGISTER_USER_FUNCTION(fetchTokenInfoById, 1);
+        REGISTER_USER_FUNCTION(fetchLPInfoById, 2);
+        REGISTER_USER_FUNCTION(getStateOfQubex, 3);
 
         REGISTER_USER_PROCEDURE(receiveTokenFromEthereum, 1);
         REGISTER_USER_PROCEDURE(sendTokenToEthereum, 2);
