@@ -178,6 +178,127 @@ protected:
         return (a < b) ? a : b;
     }
 
+    inline static void numberToString(uint64 num, Array<uint8, 32>& strNum, uint32& length)
+    {
+        if (num == 0) {
+            strNum.set(0, '0');
+            return;
+        }
+
+        Array<uint8, 32> temp;
+        length = 0;
+
+        while (num > 0) {
+            temp.set(length++, (uint8)((num % 10) + 48));
+            num /= 10;
+        }
+
+        for (uint32 j = 0; j < length; j++) {
+            strNum.set(j, temp.get(length - j - 1));
+        }
+    }
+
+    inline static uint64 stringToNumber(Array<uint8, 32> strNum, uint32 length)
+    {
+        uint64 number = 0;
+
+        for (uint32 i = 0; i < length; i++) 
+        {
+            if (strNum.get(i) < 48 || strNum.get(i) > 57) 
+            {
+                return 0; 
+            }
+            number = number * 10 + (strNum.get(i) - 48);
+        }
+
+        return number;
+    }
+
+    inline static void bigMulti(uint64 a, uint64 b, Array<uint8, 32>& strResult, uint32& lenResult)
+    {
+        Array<uint8, 32> strA;
+        Array<uint8, 32> strB;
+        Array<uint32, 64> tempResult;
+
+        uint32 lenA;
+        uint32 lenB;
+
+        numberToString(a, strA, lenA);
+        numberToString(a, strB, lenB);
+        
+        lenResult = lenA + lenB;
+        
+        for (uint32 i = lenA - 1; i >= 0; i--) 
+        {
+            for (uint32 j = lenB - 1; j >= 0; j--) 
+            {
+                uint32 mul = (strA.get(i) - 48) * (strB.get(j) - 48);
+                uint32 sum = mul + tempResult.get(i + j + 1);
+
+                tempResult.set(i + j + 1, sum % 10);
+                tempResult.set(i + j, tempResult.get(i + j) + sum / 10);
+            }
+        }
+
+        uint32 index = 0, k = 0;
+        while (index < lenResult && tempResult.get(index) == 0) 
+        {
+            index++;
+        }
+        
+        if (index == lenResult) 
+        {
+            strResult.set(0, 48);
+        } 
+        else 
+        {
+            while (index < lenResult) 
+            {
+                strResult.set(k++, tempResult.get(index++) + 48);
+            }
+        }
+    }
+
+    inline static uint64 bigDiv(Array<uint8, 32> a, uint64 b, uint32 lenA) {
+        
+        if (b == 0) 
+        {
+            return;
+        }
+    
+        Array<uint8, 32> strResult;
+        Array<uint8, 32> quotient;
+        uint32 qIndex = 0;
+        uint32 remainder = 0;
+    
+        for (uint32 i = 0; i < lenA; i++) 
+        {
+            remainder = remainder * 10 + (a.get(i) - 48);
+    
+            uint32 digit = remainder / b;
+            remainder = remainder % b;
+    
+            if (qIndex != 0 || digit > 0) 
+            {
+                quotient.set(qIndex++, digit + 48);
+            }
+        }
+    
+        if (qIndex == 0) 
+        {
+            strResult.set(0, 48);
+        } 
+        else 
+        {
+            for(uint32 i = 0 ; i < qIndex; i++)
+            {
+                strResult.set(i, quotient.get(i));
+            }
+        }
+
+        return stringToNumber(strResult, qIndex);
+    }
+
     struct fetchTokenInfoById_locals
     {
         uint32 _t, _r;
@@ -445,6 +566,8 @@ protected:
         liquidityInfo updatedPool;
         uint64 amountOfNewLPToken;
         uint32 _r;
+        uint32 lenResult;
+        Array<uint8, 32> multiResult;
     };
 
     PUBLIC_PROCEDURE(addLiquidityPool)
@@ -484,8 +607,11 @@ protected:
             qpi.transfer(qpi.invocator(), qpi.invocationReward() - input.amountOfQubic);
         }
 
-        locals.amountOfNewLPToken = div(input.amountOfQubic, state.liquidityPools.get(input.LPTokenId).amountOfQubic) * state.liquidityPools.get(input.LPTokenId).supplyOfLPToken;
-        locals.amountOfNewLPToken = min(locals.amountOfNewLPToken, div(input.amountOfERC20Token, state.liquidityPools.get(input.LPTokenId).amountOfERC20Token) * state.liquidityPools.get(input.LPTokenId).supplyOfLPToken);
+        bigMulti(input.amountOfQubic, state.liquidityPools.get(input.LPTokenId).supplyOfLPToken, locals.multiResult, locals.lenResult);
+        locals.amountOfNewLPToken = bigDiv(locals.multiResult, state.liquidityPools.get(input.LPTokenId).amountOfQubic, locals.lenResult);
+        
+        bigMulti(input.amountOfERC20Token, state.liquidityPools.get(input.LPTokenId).supplyOfLPToken, locals.multiResult, locals.lenResult);
+        locals.amountOfNewLPToken = min(locals.amountOfNewLPToken, bigDiv(locals.multiResult, state.liquidityPools.get(input.LPTokenId).amountOfERC20Token, locals.lenResult));
 
         qpi.transferShareOwnershipAndPossession(input.ERC20TokenName, SELF, qpi.invocator(), qpi.invocator(), input.amountOfERC20Token, SELF);
         qpi.transferShareOwnershipAndPossession(input.LPTokenName, SELF, SELF, SELF, locals.amountOfNewLPToken, qpi.invocator());
@@ -511,6 +637,8 @@ protected:
         uint64 amountOfQubicTransferred;
         uint64 amountOfERC20TokenTransferred;
         uint32 _r;
+        uint32 lenResult;
+        Array<uint8, 32> multiResult;
     };
 
     PUBLIC_PROCEDURE_WITH_LOCALS(withdrawLiquidity)
@@ -530,8 +658,11 @@ protected:
             return ;
         }
 
-        locals.amountOfERC20TokenTransferred = div(state.liquidityPools.get(input.LPTokenId).amountOfERC20Token * input.amountOfLP, state.liquidityPools.get(input.LPTokenId).supplyOfLPToken);
-        locals.amountOfQubicTransferred = div(state.liquidityPools.get(input.LPTokenId).amountOfQubic * input.amountOfLP, state.liquidityPools.get(input.LPTokenId).supplyOfLPToken);
+        bigMulti(state.liquidityPools.get(input.LPTokenId).amountOfERC20Token, input.amountOfLP, locals.multiResult, locals.lenResult);
+        locals.amountOfERC20TokenTransferred = bigDiv(locals.multiResult, state.liquidityPools.get(input.LPTokenId).supplyOfLPToken, locals.lenResult);
+        
+        bigMulti(state.liquidityPools.get(input.LPTokenId).amountOfQubic, input.amountOfLP, locals.multiResult, locals.lenResult);
+        locals.amountOfQubicTransferred = bigDiv(locals.multiResult, state.liquidityPools.get(input.LPTokenId).supplyOfLPToken, locals.lenResult);
 
         qpi.transfer(qpi.invocator(), locals.amountOfQubicTransferred);
         qpi.transferShareOwnershipAndPossession(locals.ERC20TokenName, SELF, SELF, SELF, locals.amountOfERC20TokenTransferred, qpi.invocator());
@@ -557,6 +688,8 @@ protected:
         uint64 realSwappedAmount;
         uint64 amountOfSwappedToken;
         uint64 transferredQubicAmount;
+        uint32 lenResult;
+        Array<uint8, 32> multiResult;
     };
 
     PUBLIC_PROCEDURE(swap)
@@ -594,7 +727,8 @@ protected:
             locals.updatedPool.collectedFee = state.liquidityPools.get(input.LPTokenId).collectedFee + div(input.amountOfQubic * state.liquidityPools.get(input.LPTokenId).fee, 1000ULL);
             locals.realSwappedAmount = input.amountOfQubic - div(input.amountOfQubic * QUBEX_PLATFORM_FEE, 1000ULL) - div(input.amountOfQubic * QUBEX_SHAREHOLDERS_FEE, 1000ULL) - div(input.amountOfQubic * state.liquidityPools.get(input.LPTokenId).fee, 1000ULL);
 
-            locals.amountOfSwappedToken = state.liquidityPools.get(input.LPTokenId).amountOfERC20Token - (state.liquidityPools.get(input.LPTokenId).amountOfERC20Token * state.liquidityPools.get(input.LPTokenId).amountOfQubic / (state.liquidityPools.get(input.LPTokenId).amountOfQubic + input.amountOfQubic));
+            bigMulti(state.liquidityPools.get(input.LPTokenId).amountOfERC20Token, state.liquidityPools.get(input.LPTokenId).amountOfQubic, locals.multiResult, locals.lenResult);
+            locals.amountOfSwappedToken = state.liquidityPools.get(input.LPTokenId).amountOfERC20Token - bigDiv(locals.multiResult, (state.liquidityPools.get(input.LPTokenId).amountOfQubic + input.amountOfQubic), locals.lenResult);
             locals.updatedPool.amountOfQubic = state.liquidityPools.get(input.LPTokenId).amountOfQubic + input.amountOfQubic;
             locals.updatedPool.amountOfERC20Token = state.liquidityPools.get(input.LPTokenId).amountOfERC20Token - locals.amountOfSwappedToken;
             qpi.transferShareOwnershipAndPossession(state.liquidityPools.get(input.LPTokenId).ERC20TokenName, SELF, SELF, SELF, locals.amountOfSwappedToken, qpi.invocator());
@@ -615,7 +749,8 @@ protected:
 
             qpi.transferShareOwnershipAndPossession(state.liquidityPools.get(input.LPTokenId).ERC20TokenName, SELF, qpi.invocator(), qpi.invocator(), input.amountOfERC20Token, SELF);
 
-            locals.amountOfSwappedToken = state.liquidityPools.get(input.LPTokenId).amountOfQubic - (state.liquidityPools.get(input.LPTokenId).amountOfQubic * state.liquidityPools.get(input.LPTokenId).amountOfERC20Token / (state.liquidityPools.get(input.LPTokenId).amountOfERC20Token + input.amountOfERC20Token));
+            bigMulti(state.liquidityPools.get(input.LPTokenId).amountOfQubic, state.liquidityPools.get(input.LPTokenId).amountOfERC20Token, locals.multiResult, locals.lenResult);
+            locals.amountOfSwappedToken = state.liquidityPools.get(input.LPTokenId).amountOfQubic - bigDiv(locals.multiResult, (state.liquidityPools.get(input.LPTokenId).amountOfERC20Token + input.amountOfERC20Token), locals.lenResult);
 
             state.earnedQubic += div(locals.amountOfSwappedToken * QUBEX_PLATFORM_FEE, 1000ULL);
             state.shareHoldersFee += div(locals.amountOfSwappedToken * QUBEX_SHAREHOLDERS_FEE, 1000ULL);
