@@ -146,6 +146,7 @@ public:
 
 protected:
 
+    id SCOwnerId;
     uint64 earnedQubic;
     uint64 shareHoldersFee;
     uint32 numberOfIssuedToken;
@@ -788,6 +789,17 @@ protected:
     _
 
     INITIALIZE
+        
+        state.SCOwnerId = ID(_Y, _R, _P, _H, _H, _S, _U, _E, _E, _B, _S, _A, _X, _B, _Y, _F, _B, _A, _X, _P, _U, _R, _E, _X, _F, _E, _S, _A, _Q, _F, _N, _C, _J, _O, _M, _R, _I, _G, _B, _C, _W, _D, _I, _M, _K, _R, _R, _I, _Z, _T, _K, _P, _O, _J, _F, _H);
+    _
+
+    END_EPOCH
+
+        qpi.transfer(state.SCOwnerId, state.earnedQubic);
+        qpi.distributeDividends(div(state.shareHoldersFee, 676ULL));
+        state.earnedQubic = 0;
+        state.shareHoldersFee = 0;
+        
     _
 
 };
